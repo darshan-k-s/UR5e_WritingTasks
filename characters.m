@@ -1,5 +1,55 @@
 % Drawing ASCII
 
+function traj = generateTrajectoryFromString(str, hershey, scale, spacing, z_write, z_lift, points_per_segment)
+% Generate a 3D trajectory for a given ASCII string using Hershey font
+% Returns a [N×3] matrix in mm: [x, y, z]
+
+    traj = [];
+    x_offset = 0;
+
+    for c = 1:length(str)
+        char_data = hershey{str(c)};
+        strokes = densify_strokes(char_data.stroke, points_per_segment);
+        strokes = scale * strokes;
+
+        % Add Z layer (initially 0s)
+        path = [strokes; zeros(1, size(strokes, 2))];
+
+        % Lift pen at stroke breaks (NaNs)
+        k = find(isnan(path(1, :)));
+        path(:, k) = path(:, k-1);
+        path(3, k) = z_lift / 1000; % In meters
+
+        % Convert to mm and shift in X
+        char_traj = path' * 1000;
+        char_traj(:,1) = char_traj(:,1) + x_offset;
+
+        traj = [traj; char_traj];
+ 
+        % --- Add lift-up and travel segment between characters ---
+        if c < length(str)
+            % Lift pen at end
+            lift_pos = char_traj(end, :); 
+            lift_pos(3) = z_lift;
+
+            % Move in X to next character (with pen lifted)
+            move_pos = lift_pos;
+            move_pos(1) = move_pos(1) + spacing;
+
+            % Lower pen at next start
+            lower_pos = move_pos;
+            lower_pos(3) = z_write;
+
+            % Append lift + move + lower to trajectory
+            traj = [traj; lift_pos; move_pos; lower_pos];
+        end
+
+        % Add spacing between characters
+        x_offset = x_offset + spacing;
+    end
+end
+
+
 function dense_stroke = densify_strokes(stroke, points_per_segment)
     dense_stroke = [];
     current_stroke = [];
@@ -47,6 +97,7 @@ robo = rtde(host, port);
 
 % Writing params
 scale = 0.04;
+spacing = 50;
 
 
 % Movement params
@@ -67,47 +118,29 @@ robo.movej(start_pos);
 
 str = '0123456789';
 
-
-text = hershey{'2'};
 points_per_segment = 10;  % Increase this to get more waypoints
-strokes = densify_strokes(text.stroke, points_per_segment);
 
-path = [scale*strokes; zeros(1,numcols(strokes))]; % create the path 
-
-% Where ever there is an nan it indicates that we need to lift up.
-k = find(isnan(path(1,:))); %Find index of NaN, i.e, column
-
-
-path(:,k) = path(:,k-1); path(3,k) = 0.2*scale; % Determine the hight of the lift up motions. 
-% 0.2 * scale is the height. 0.2 is in m
-
-traj = [path'*1000]; % convert to the mm units so that we can use the rtde toolbox
+myTraj = generateTrajectoryFromString(str, hershey, scale, spacing, z_write, z_lift, points_per_segment);
 
 % Generate a plot of what we are expecting
-scatter3(traj(:,1), traj(:,2), traj(:,3));
-plot3(traj(:,1), traj(:,2), traj(:,3));
+scatter3(myTraj(:,1), myTraj(:,2), myTraj(:,3));
+plot3(myTraj(:,1), myTraj(:,2), myTraj(:,3));
 
-% Creating a path array
 path = [];
-
-for i = 2:size(traj,1)
-    disp(traj(1, 1:3));
-    tcp_xyz = traj(i,1:3) + [start_pos(1), start_pos(2), z_write];
-    %tcp_xyz = traj(i,1:3) + [start_pos(1), start_pos(2), z_write] - traj(1, 1:3);  % or z_lift for pen-up
-    point = [tcp_xyz, home(4:6), a, v, 0, r];
-    path = [path; point];
+for i = 1:size(myTraj,1)
+    tcp_xyz = myTraj(i,1:3) + [start_pos(1), start_pos(2), z_write];  % Apply global offset
+    if tcp_xyz(3) > 101
+        tcp_xyz(3) = tcp_xyz(3) - 100;
+    end
+    disp(tcp_xyz(3));
+    pose = [tcp_xyz, home(4:6), a, v, 0, r];
+    path = [path; pose];
 end
-
 
 % Execute the movement!
 poses = robo.movej(path);
 
-for i = 1:1000000
-end
-
 robo.drawPath(poses);
-
-
 
 % Close RTDE instance
 robo.close();
