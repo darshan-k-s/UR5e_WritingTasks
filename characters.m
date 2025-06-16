@@ -116,7 +116,8 @@ start_pos = [-588.53, -350, z_lift, home(4:6)]; % Start pos of first stroke (mm)
 robo.movej(home);
 robo.movej(start_pos);
 
-str = '0123456789';
+% str = '0123456789';
+str = input("Enter 10 alphanumeric characters: ", 's');
 
 points_per_segment = 10;  % Increase this to get more waypoints
 
@@ -137,10 +138,19 @@ for i = 1:size(myTraj,1)
     path = [path; pose];
 end
 
+%{
 % Execute the movement!
 poses = robo.movej(path);
 
 robo.drawPath(poses);
+%}
+
+% Optional: in simulation only
+parfeval(@() robo.movej(path), 0);   % Run motion in background
+
+% Meanwhile, plot path immediately
+figure;
+plot3(path(:,1), path(:,2), path(:,3), 'b.-');
 
 % Close RTDE instance
 robo.close();
