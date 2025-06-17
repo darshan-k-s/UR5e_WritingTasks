@@ -83,7 +83,6 @@ end
 
 
 
-
 clear all; clc;
 
 % Start RVC module
@@ -118,6 +117,11 @@ robo.movej(start_pos);
 
 % str = '0123456789';
 str = input("Enter 10 alphanumeric characters: ", 's');
+
+if length(str) ~= 10 || ~all(ismember(str, ['0':'9', 'a':'z']))
+    error('Invalid input. Must be 10 characters from 0–9 and a–z.');
+    quit;
+end
 
 points_per_segment = 10;  % Increase this to get more waypoints
 
