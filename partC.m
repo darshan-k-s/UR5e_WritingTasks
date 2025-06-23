@@ -88,89 +88,18 @@ function T = transform2D(tx, ty, theta_deg)
          0,           0,          1];
 end
 
-%{
-function traj = generateAlignedMathTrajectory(expr, hershey, scale, spacing, z_write, z_lift, points_per_segment)
-% Generate a 3-line long-form trajectory for math ops like:
+
+function traj = generateMathWithOperatorColumnTrajectory(expr, hershey, scale, spacing, z_write, z_lift, points_per_segment)
+% Generates a trajectory where:
+% - Numbers are right-aligned in one column
+% - Operator appears in a separate column (next to operand 2)
+% Format:
 %   10
-%    3×
-%   30
+%    1  -
+%    9
 
     expr = strrep(expr, '=', '');
-    result = eval(expr);
-    result_str = num2str(result);
-
-    tokens = regexp(expr, '(\d+)([\+\-\*])(\d+)', 'tokens');
-    if isempty(tokens)
-        error('Invalid expression format.');
-    end
-
-    tokens = tokens{1};
-    op1 = tokens{1};         % "10"
-    operator = tokens{2};    % "*"
-    op2 = tokens{3};         % "3"
-
-    % Align everything to the right
-    maxlen = max([length(op1), length(op2)+1, length(result_str)]);
-
-    line1 = pad(op1, maxlen, 'left');               % " 10"
-    line2 = pad([op2, operator], maxlen, 'left');   % " 3×"
-    line3 = pad(result_str, maxlen, 'left');        % " 30"
-
-    lines = {line1, line2, line3};  % Top to bottom
-
-    % ---- Generate stroke trajectory line by line ----
-    traj = [];
-    y_offset = 0;
-
-    for i = 1:length(lines)
-        line = lines{i};
-        x_offset = 0;
-
-        for ch = line
-            if ch == ' '
-                x_offset = x_offset + 50;  % space character spacing
-                continue;
-            end
-
-            if isempty(hershey{ch})
-                warning('Character "%s" not found in Hershey font.', ch);
-                continue;
-            end
-
-            strokes = densify_strokes(hershey{ch}.stroke, points_per_segment);
-            strokes = scale * strokes;
-            path = [strokes; zeros(1, size(strokes, 2))];
-
-            % Handle pen-up (lift) segments
-            k = find(isnan(path(1,:)));
-            path(:,k) = path(:,k-1);
-            path(3,k) = z_lift / 1000;
-
-            char_traj = path' * 1000;
-            char_traj(:,1) = char_traj(:,1) + x_offset;
-            char_traj(:,2) = char_traj(:,2) - y_offset;
-
-            traj = [traj; char_traj];
-
-            x_offset = x_offset + 50;
-        end
-
-        y_offset = y_offset + spacing;
-    end
-end
-
-%}
-
-
-function traj = generateVerticalStackedMathTrajectory(expr, hershey, scale, spacing, z_write, z_lift, points_per_segment)
-% Create vertically stacked math layout like:
-%   3
-%   1 +
-%   2
-
-    expr = strrep(expr, '=', '');
-    result = eval(expr);
-    result_str = num2str(result);
+    result_str = num2str(eval(expr));
 
     % Parse parts
     tokens = regexp(expr, '(\d+)([\+\-\*])(\d+)', 'tokens');
@@ -178,28 +107,34 @@ function traj = generateVerticalStackedMathTrajectory(expr, hershey, scale, spac
         error('Invalid math expression');
     end
 
-    op1 = tokens{1}{1};        % e.g. '1'
-    operator = tokens{1}{2};   % e.g. '+'
-    op2 = tokens{1}{3};        % e.g. '2'
+    op1 = tokens{1}{1};       % '10'
+    operator = tokens{1}{2};  % '-'
+    op2 = tokens{1}{3};       % '1'
 
-    % 🔁 STACK from top to bottom
-    lines = { ...
-        result_str;           % line 1 (top): result
-        [op1, operator];      % line 2: operand 1 + operator
-        op2                  % line 3: operand 2
+    % Determine column width (max digits among all numbers)
+    max_digits = max([length(op1), length(op2), length(result_str)]);
+    digit_col_x_spacing = 40;
+    operator_col_x = max_digits * digit_col_x_spacing + 20;  % Operator in separate column
+
+    % Correct line order: operand1, operand2, result
+    number_lines = {
+        pad(op1, max_digits, 'left');       % Line 1
+        pad(op2, max_digits, 'left');       % Line 2 ← will get operator
+        pad(result_str, max_digits, 'left') % Line 3
     };
 
-    % Generate stroke trajectory
+    op_line_index = 2;  % Place operator with line 2
+
     traj = [];
     y_offset = 0;
 
-    for i = 1:length(lines)
-        line = lines{i};
-        x_offset = 0;
+    for i = 1:length(number_lines)
+        line = number_lines{i};
+        %disp(line(2));
 
-        for ch = line
+        for j = 1:length(line)
+            ch = line(j);
             if ch == ' '
-                x_offset = x_offset + 50;
                 continue;
             end
 
@@ -212,21 +147,95 @@ function traj = generateVerticalStackedMathTrajectory(expr, hershey, scale, spac
             strokes = scale * strokes;
             path = [strokes; zeros(1, size(strokes, 2))];
 
-            % Handle pen-ups
             k = find(isnan(path(1,:)));
             path(:,k) = path(:,k-1);
             path(3,k) = z_lift / 1000;
 
             char_traj = path' * 1000;
-            char_traj(:,1) = char_traj(:,1) + x_offset;
+            char_traj(:,1) = char_traj(:,1) + (j - 1) * digit_col_x_spacing;
             char_traj(:,2) = char_traj(:,2) - y_offset;
 
             traj = [traj; char_traj];
 
-            x_offset = x_offset + 50;  % next character on same line
+            % --- Add lift-up and travel segment between characters ---
+            if j < length(line)
+                % Lift pen at end
+                lift_pos = char_traj(end, :); 
+                lift_pos(3) = z_lift;
+    
+                % Move in X to next character (with pen lifted)
+                move_pos = lift_pos;
+                move_pos(1) = move_pos(1) + spacing;
+    
+                % Lower pen at next start
+                lower_pos = move_pos;
+                lower_pos(3) = z_write;
+    
+                % Append lift + move + lower to trajectory
+                traj = [traj; lift_pos; move_pos; lower_pos];
+            end
+        
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            if and(i == 2, j == length(line))
+                disp(number_lines(j));
+                
+                % Lift pen at end
+                lift_pos = char_traj(end, :); 
+                lift_pos(3) = z_lift;
+    
+                traj = [traj; lift_pos;];
+            end
+        
         end
 
-        y_offset = y_offset + spacing;  % move down for next line
+        % Add operator in separate column, but only to line 2
+        if i == op_line_index
+            ch = operator;
+            if ~isempty(hershey{ch})
+                strokes = densify_strokes(hershey{ch}.stroke, points_per_segment);
+                strokes = scale * strokes;
+                path = [strokes; zeros(1, size(strokes, 2))];
+
+                k = find(isnan(path(1,:)));
+                path(:,k) = path(:,k-1);
+                path(3,k) = z_lift / 1000;
+
+                char_traj = path' * 1000;
+                char_traj(:,1) = char_traj(:,1) + operator_col_x;
+                char_traj(:,2) = char_traj(:,2) - y_offset;
+
+                traj = [traj; char_traj];
+
+                % --- Add lift-up and travel segment between characters ---
+                if j < length(line)
+                    % Lift pen at end
+                    lift_pos = char_traj(end, :); 
+                    lift_pos(3) = z_lift;
+        
+                    % Move in X to next character (with pen lifted)
+                    move_pos = lift_pos;
+                    move_pos(1) = move_pos(1) + spacing;
+        
+                    % Lower pen at next start
+                    lower_pos = move_pos;
+                    lower_pos(3) = z_write;
+        
+                    % Append lift + move + lower to trajectory
+                    traj = [traj; lift_pos; move_pos; lower_pos];
+                end
+            end
+        end
+
+        y_offset = y_offset + spacing;
+        
+        if j == length(line)
+            % Lift pen at end
+            lift_pos = char_traj(end, :); 
+            lift_pos(3) = z_lift;
+
+            traj = [traj; lift_pos;];
+        end
+
     end
 end
 
@@ -251,7 +260,7 @@ points_per_segment = 2;  % Increase this to get more waypoints
 % Movement params
 a = 1.4;
 v = 0.5;
-r = 0.0035;
+r = 0.003;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % 
@@ -341,7 +350,7 @@ else
     disp("---------------MATH STUFF----------------");
     str = input("Enter the math expression:\n", 's');
 
-    traj = generateVerticalStackedMathTrajectory(str, hershey, scale, spacing, z_write, z_lift, points_per_segment);
+    traj = generateMathWithOperatorColumnTrajectory(str, hershey, scale, spacing, z_write, z_lift, points_per_segment);
     
     path = [];
     for i = 1:size(traj,1)
@@ -372,9 +381,9 @@ end
 %
 % Execute the movement
 poses = robo.movel(path);
+robo.movej(home);
 
 robo.drawPath(poses);
-robo.movej(home);
 %
 
 
